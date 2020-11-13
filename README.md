@@ -57,7 +57,7 @@ For (1), first hadd together your full output from the EB dataset. Then, run the
 
 Make sure that the enhanced bias weight file inside `makeFriend.py` corresponds to the same run you ran on!
 
-You'll get out a file `my_input_dataset.EBweights.root`. This is just a tree `weights` with two branches: eventNumber and EBweight.
+You'll get out a file `my_input_dataset.EBweights.root`. This is just a tree `trig` with two branches: eventNumber and EBweight.
 
 In your analysis code, then setup like this:
 
