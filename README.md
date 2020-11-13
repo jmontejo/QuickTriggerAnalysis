@@ -42,3 +42,35 @@ prun --useAthenaPackages --exec "python skimTrig_r21.py  --inputFiles %IN --isDa
 ```
 
 Note that if you change the name of the output file `tmpTrig.root` in the script: `fOut = ROOT.TFile("tmpTrig.root","RECREATE")`, you also need to change the name of the file in outputs (likely some regex also works, but I have not tried).
+
+
+In order to analyse EnhancedBias data, you also need to add the EB weights. There are two steps here:
+
+(1) create a tree with EB weights saved for each event number
+(2) add this tree as a friend in your analysis script.
+
+For (1), first hadd together your full output from the EB dataset. Then, run the script `makeFriend.py`:
+
+```
+./makeFriend.py my_input_dataset.root
+``` 
+
+Make sure that the enhanced bias weight file inside `makeFriend.py` corresponds to the same run you ran on!
+
+You'll get out a file `my_input_dataset.EBweights.root`. This is just a tree `weights` with two branches: eventNumber and EBweight.
+
+In your analysis code, then setup like this:
+
+```
+data_file = 'enhancedBias.root'
+weights_file = 'enhancedBias.EBweights.root'
+
+
+f = ROOT.TFile.Open(data_file, 'read')
+t = f.Get('trig')
+if not doMC:
+    t.AddFriend('trig',weights_file)
+    print ('added a friend')
+```
+
+And then you can access the variable `EBweight` for each event, like you would any other variable.
