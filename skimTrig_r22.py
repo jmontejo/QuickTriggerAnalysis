@@ -5,10 +5,8 @@ from math import pi,sqrt,cos
 from ctypes import *
 import array
 import struct 
-
 import ROOT
 
-save_l1rois = True
 
 def ntupName( stri ) :
         strtopo = stri.replace("-","_")
@@ -16,19 +14,33 @@ def ntupName( stri ) :
         strtopo = strtopo.replace("]","_")
         return strtopo
 
-# set up environment
-if (('ROOTCOREDIR' in os.environ) and ROOT.gROOT.Macro( '$ROOTCOREDIR/scripts/load_packages.C' )):
-    print ("couldn't load the RootCore packages")
 
+parser = argparse.ArgumentParser(description='skim (D)AODs!')
+
+parser.add_argument('--l1rois', dest='save_l1rois', action='store_true',
+                    default=False, help='store all L1 RoIs in the output')
+
+parser.add_argument('--isData', dest='isData', action='store',
+                    default=None, help='are you running on data or MC?')
+                    
+parser.add_argument('--inputFiles', dest='inputFiles', action='store',
+                    default='', help='comma-separated list of input files (or a single file)')
+
+args = parser.parse_args()
+inputFiles = args.inputFiles
+save_l1rois = args.save_l1rois
+isData = args.isData
+
+ROOT.gROOT.Macro( '$ROOTCOREDIR/scripts/load_packages.C' )
 
 # Initialize the xAOD infrastructure: 
-if(not ROOT.xAOD.Init().isSuccess()): print ("Failed xAOD.Init()")
+if(not ROOT.xAOD.Init().isSuccess()): print "Failed xAOD.Init()"
 
-inputFiles = sys.argv[1].split(',')
-print ("inputFiles = ", inputFiles)
+inputFiles = inputFiles.split(',')
+print "inputFiles = ", inputFiles
 fileName=inputFiles[0]
 if len(fileName) == 0 :
-    print ("Please provide input")
+    print "Please provide input"
     exit()
 
 
@@ -37,9 +49,9 @@ if len(fileName) == 0 :
 treeName = "CollectionTree" # default when making transient tree anyway
 
 ch = ROOT.TChain(treeName)
-for i in range(1,len(sys.argv)) :
-    ch.Add(sys.argv[i])
-    print (sys.argv[i])
+for infile in inputFiles :
+    ch.Add(infile)
+    print (infile)
 
 t = ROOT.xAOD.MakeTransientTree( ch )
 
@@ -127,9 +139,16 @@ for trig in trigList :
 eventNumber = array.array("l",(0 for i in range(0,1)))
 tOut.Branch("eventNumber", eventNumber,"eventNumber/L")
 eventWeight = array.array("f",(0 for i in range(0,1)))
-tOut.Branch("eventWeight", eventWeight,"eventWeight/F")
+if not isData: tOut.Branch("eventWeight", eventWeight,"eventWeight/F")
 avgmu = array.array("f",(0 for i in range(0,1)))
 tOut.Branch("averageMu", avgmu,"avgmu/F")
+
+reference_trig_name = 'L1_MU20'
+reference_trig =  array.array("i",(0 for i in range(0,1)))
+if isData: tOut.Branch('reference_trig_'+reference_trig_name, reference_trig,'reference_trig_'+reference_trig_name+'/I')
+
+offline_selection = array.array("i",(0 for i in range(0,1)))
+tOut.Branch('pass_offline_selection', offline_selection,'pass_offline_selection/I')
 
 l1muons = ROOT.vector('TLorentzVector')(10)
 l1muonsn= array.array("i",(0 for i in range(0,1)))
@@ -157,28 +176,26 @@ if save_l1rois:
     tOut.Branch('l1taus_max_th',  l1tau_max_threshold  )
     tOut.Branch('l1taus_max_iso',  l1tau_max_iso  )   
 
-mutimings = ROOT.vector('float')(10)
-tOut.Branch('mutime',mutimings)
-
 recomuons = ROOT.vector('TLorentzVector')(10)
 tOut.Branch('recomuons',  recomuons  )
-recomuonsn= array.array("i",(0 for i in range(0,1)))
-tOut.Branch('recomuons_n',  recomuonsn, "recomuons_n/I"  )
+
+dimuon_mass = array.array('f',(0 for i in range(0,1)))
+tOut.Branch('dimuon_mass',dimuon_mass,'dimuon_mass/F')
 
 hltmuons = ROOT.vector('TLorentzVector')(10)
 tOut.Branch('hltmuons',  hltmuons  )
-
-
-nmumass = array.array("f",(0 for i in range(0,1)))
-tOut.Branch('nmumass', nmumass, "nmumass/F")
 
 ################################################################
 
 print( "Number of input events: %s" % t.GetEntries() )
 for entry in range( t.GetEntries() ):
-    if entry % 100 == 0:
+    if entry % 5000 == 0:
         print( "On event number: %s" % entry )
     t.GetEntry( entry )
+    
+    #first, get info for our reference trigger. Need to keep these events to calculate rates (data only!)
+    reference_trig = 0
+    if isData and ROOT.trigDecTool.isPassed(reference_trig_name): reference_trig = 1
     
     # Make our basic offline selection. in our dummy analysis, this is two 8 GeV 
     # combined muons with 10 < m(mumu) < 75 GeV
@@ -200,16 +217,25 @@ for entry in range( t.GetEntries() ):
         for x in pts :
             recomuons.push_back(x)
             
-    if len(recomuons) < 2:
-        continue
-    dimuon_mass = (recomuons[0] + recomuons[1]).M() 
-    if dimuon_mass < 10000. or dimuon_mass > 75000.:
-        continue
+    offline_selection = 0    
+    dimuon_mass = -1
+    if len(recomuons) >= 2:
+        dimuon_mass = (recomuons[0] + recomuons[1]).M() 
+        offline_selection = int(dimuon_mass > 10000. and dimuon_mass < 75000.)
+    
+    
+    keep_event = False
+    if offline_selection:
+        keep_event = True
+    if reference_trig and isData:
+        keep_event = True
     
 	#only carry on if the event is useful!
+    if not keep_event:
+        continue
 
     eventNumber[0] = t.EventInfo.eventNumber()
-    eventWeight[0] = t.EventInfo.mcEventWeight()
+    if not isData: eventWeight[0] = t.EventInfo.mcEventWeight()
     avgmu[0] = t.EventInfo.averageInteractionsPerCrossing()
     
     for trig in trigList :
@@ -310,9 +336,9 @@ for entry in range( t.GetEntries() ):
 
     pts = []
     # get the HLT muon container and remove any overlapping muons
-    if hasattr(ch, "HLT_xAOD__MuonContainer_MuonEFInfo") :
-        for imu in range(len(ch.HLT_xAOD__MuonContainer_MuonEFInfo)):
-            mu = ch.HLT_xAOD__MuonContainer_MuonEFInfo[imu]
+    if hasattr(ch, "HLT_MuonsCB_RoI") :
+        for imu in range(len(ch.HLT_MuonsCB_RoI)):
+            mu = ch.HLT_MuonsCB_RoI[imu]
 
             duplicate = False
             for jmu in range(len(pts)) :
